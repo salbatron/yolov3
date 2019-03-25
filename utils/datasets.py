@@ -2,7 +2,7 @@ import glob
 import math
 import os
 import random
-
+import pandas as pd
 import cv2
 import numpy as np
 import torch
@@ -189,6 +189,48 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         return torch.from_numpy(img), torch.from_numpy(labels_out), img_path, (h, w)
 
+class LoadCrystalImagesAndLabels(Dataset):  # for training
+    def __init__(self, path, img_size=300):
+        self.img_files = pd.read_csv(path)
+        self.labels = list(self.img_files['label'])
+        self.img_files = list(self.img_files['file'])
+        assert len(self.img_files) > 0, 'No images found in %s' % path 
+
+        self.img_size = img_size
+
+    def __len__(self):
+        return len(self.img_files)
+
+    def __getitem__(self, index):
+        
+        img_path = self.img_files[index]
+        label = self.labels[index]
+
+        img = np.load(img_path.replace('\\','/'))
+        assert img is not None, 'File Not Found ' + img_path
+        h,w = img.shape
+        matrix = np.zeros((300,300),dtype=np.float32)
+        matrix[:h,:w] += img
+        matrix = matrix[None, :, :]
+
+        labels = np.array([[0]*5],dtype=np.float32)
+        labels[:, 0] = label
+        labels[:, 1] = w/(2*matrix.shape[1])
+        labels[:, 2] = h/(2*matrix.shape[2])
+        labels[:, 3] = w/matrix.shape[1]
+        labels[:, 4] = h/matrix.shape[2]
+        labels_out = np.zeros((1, 6), dtype=np.float32)
+        labels_out[:1, 1:] = labels
+
+        plotFlag = False
+        if plotFlag:
+            import matplotlib.pyplot as plt
+            plt.figure(figsize=(10, 10)) if index == 0 else None
+            plt.subplot(4, 4, index + 1).imshow(img[:, :, ::-1])
+            plt.plot(labels[:, [1, 3, 3, 1, 1]].T, labels[:, [2, 2, 4, 4, 2]].T, '.-')
+            plt.axis('off')
+
+        return torch.from_numpy(matrix), torch.from_numpy(labels_out), img_path, (matrix.shape[1], matrix.shape[2])
 
 def letterbox(img, height=416, color=(127.5, 127.5, 127.5)):  # resize a rectangular image to a padded square
     shape = img.shape[:2]  # shape = [height, width]
