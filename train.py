@@ -19,7 +19,9 @@ def train(
         accumulate=1,
         multi_scale=False,
         freeze_backbone=False,
-        num_workers=0
+        num_workers=0,
+        num_class1=0,
+        num_class2=0
 ):
     weights = 'weights' + os.sep
     latest = weights + 'latest.pt'
@@ -42,7 +44,7 @@ def train(
     optimizer = torch.optim.SGD(model.parameters(), lr=lr0, momentum=.9)
 
     # Dataloader
-    dataset = LoadImagesAndLabels(train_path, img_size=img_size, augment=True)
+    dataset = LoadCrystalImagesAndLabels(train_path, img_size=img_size)
     dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
 
     cutoff = -1  # backbone reaches to cutoff layer
@@ -82,8 +84,8 @@ def train(
         model.train()
         epoch += start_epoch
 
-        print(('\n%8s%12s' + '%10s' * 7) % (
-            'Epoch', 'Batch', 'xy', 'wh', 'conf', 'cls', 'total', 'nTargets', 'time'))
+        print(('\n%8s%12s' + '%10s' * 8) % (
+            'Epoch', 'Batch', 'xy', 'wh', 'conf', 'cls', 'anum', 'total', 'nTargets', 'time'))
 
         # Update scheduler (automatic)
         # scheduler.step()
@@ -134,7 +136,7 @@ def train(
             target_list = build_targets(model, targets.to(device), pred)
 
             # Compute loss
-            loss, loss_dict = compute_loss(pred, target_list)
+            loss, loss_dict = compute_loss(pred, target_list, num_class1, num_class2)
 
             # Compute gradient
             loss.backward()
@@ -148,11 +150,11 @@ def train(
             for key, val in loss_dict.items():
                 rloss[key] = (rloss[key] * i + val) / (i + 1)
 
-            s = ('%8s%12s' + '%10.3g' * 7) % (
+            s = ('%8s%12s' + '%10.3g' * 8) % (
                 '%g/%g' % (epoch, epochs - 1),
                 '%g/%g' % (i, len(dataloader) - 1),
                 rloss['xy'], rloss['wh'], rloss['conf'],
-                rloss['cls'], rloss['total'],
+                rloss['cls'], rloss['anum'], rloss['total'],
                 nT, time.time() - t0)
             t0 = time.time()
             print(s)
@@ -186,7 +188,7 @@ def train(
 
         # Calculate mAP
         with torch.no_grad():
-            P, R, mAP = test.test(cfg, data_cfg, weights=latest, batch_size=batch_size, img_size=img_size, model=model)
+            P, R, mAP = test.test(cfg, data_cfg, weights=latest, batch_size=batch_size, img_size=img_size, model=model, num_class1=num_class1, num_class2=num_class2)
 
         # Write epoch results
         with open('results.txt', 'a') as file:
@@ -194,29 +196,44 @@ def train(
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=270, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
-    parser.add_argument('--accumulate', type=int, default=1, help='accumulate gradient x batches before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='cfg/coco.data', help='coco.data file path')
-    parser.add_argument('--multi-scale', action='store_true', help='random image sizes per batch 320 - 608')
-    parser.add_argument('--img-size', type=int, default=32 * 13, help='pixels')
-    parser.add_argument('--resume', action='store_true', help='resume training flag')
-    parser.add_argument('--num-workers', type=int, default=4, help='number of Pytorch DataLoader workers')
-    opt = parser.parse_args()
-    print(opt, end='\n\n')
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--epochs', type=int, default=270, help='number of epochs')
+    # parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
+    # parser.add_argument('--accumulate', type=int, default=1, help='accumulate gradient x batches before optimizing')
+    # parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
+    # parser.add_argument('--data-cfg', type=str, default='cfg/coco.data', help='coco.data file path')
+    # parser.add_argument('--multi-scale', action='store_true', help='random image sizes per batch 320 - 608')
+    # parser.add_argument('--img-size', type=int, default=32 * 13, help='pixels')
+    # parser.add_argument('--resume', action='store_true', help='resume training flag')
+    # parser.add_argument('--num-workers', type=int, default=4, help='number of Pytorch DataLoader workers')
+    # opt = parser.parse_args()
+    # print(opt, end='\n\n')
 
+    
     init_seeds()
 
+    cfg = 'cfg/yolov3-tiny.cfg'
+    data = 'data/crystal.data'
+    img_size = 300
+    resume = False
+    epochs = 30
+    batch_size = 32
+    accumulate = 1
+    multi_scale = False
+    num_workers = 0
+    num_class1 = 2
+    num_class2 = 21
+
     train(
-        opt.cfg,
-        opt.data_cfg,
-        img_size=opt.img_size,
-        resume=opt.resume,
-        epochs=opt.epochs,
-        batch_size=opt.batch_size,
-        accumulate=opt.accumulate,
-        multi_scale=opt.multi_scale,
-        num_workers=opt.num_workers
+        cfg,
+        data_cfg = data,
+        img_size=img_size,
+        resume=resume,
+        epochs=epochs,
+        batch_size=batch_size,
+        accumulate=accumulate,
+        multi_scale=multi_scale,
+        num_workers=num_workers,
+        num_class1=num_class1,
+        num_class2=num_class2
     )
