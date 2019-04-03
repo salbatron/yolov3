@@ -11,6 +11,7 @@ from utils.utils import *
 
 def detect(
         cfg,
+        data_cfg,
         weights,
         images,
         output='output',  # output folder
@@ -45,10 +46,10 @@ def detect(
         save_images = False
         dataloader = LoadWebcam(img_size=img_size)
     else:
-        dataloader = LoadImages(images, img_size=img_size)
+        dataloader = LoadCrystalImages(images, img_size=img_size)
 
     # Get classes and colors
-    classes = load_classes(parse_data_cfg('cfg/coco.data')['names'])
+    classes = load_classes(parse_data_cfg(data_cfg)['names'])
     colors = [[random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)] for _ in range(len(classes))]
 
     for i, (path, img, im0) in enumerate(dataloader):
@@ -95,7 +96,7 @@ def detect(
         print('Done. (%.3fs)' % dt)
 
         if save_images:  # Save generated image with detections
-            cv2.imwrite(save_path, im0)
+            cv2.imwrite(save_path[:-4]+'.png', im0)
 
         if webcam:  # Show live webcam
             cv2.imshow(weights, im0)
@@ -105,22 +106,31 @@ def detect(
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
-    parser.add_argument('--weights', type=str, default='weights/yolov3.weights', help='path to weights file')
-    parser.add_argument('--images', type=str, default='data/samples', help='path to images')
-    parser.add_argument('--img-size', type=int, default=32 * 13, help='size of each image dimension')
-    parser.add_argument('--conf-thres', type=float, default=0.50, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
-    opt = parser.parse_args()
-    print(opt)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
+    # parser.add_argument('--weights', type=str, default='weights/yolov3.weights', help='path to weights file')
+    # parser.add_argument('--images', type=str, default='data/samples', help='path to images')
+    # parser.add_argument('--img-size', type=int, default=32 * 13, help='size of each image dimension')
+    # parser.add_argument('--conf-thres', type=float, default=0.50, help='object confidence threshold')
+    # parser.add_argument('--nms-thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
+    # opt = parser.parse_args()
+    # print(opt)
+
+    cfg = 'cfg/yolov3-tiny.cfg'
+    data = 'data/crystal.data'
+    weights = 'weights/latest.pt'
+    images = 'data/samples/'
+    img_size = 300
+    conf_thres = 0.8
+    nms_thres = 0.45
 
     with torch.no_grad():
         detect(
-            opt.cfg,
-            opt.weights,
-            opt.images,
-            img_size=opt.img_size,
-            conf_thres=opt.conf_thres,
-            nms_thres=opt.nms_thres
+            cfg=cfg,
+            data_cfg = data,
+            weights=weights,
+            images=images,
+            img_size=img_size,
+            conf_thres=conf_thres,
+            nms_thres=nms_thres
         )
