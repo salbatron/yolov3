@@ -248,10 +248,10 @@ def wh_iou(box1, box2):
     return inter_area / union_area  # iou
 
 
-def compute_loss(p, targets):  # predictions, targets
+def compute_loss(p, targets, num_class1, num_class2):  # predictions, targets
     FT = torch.cuda.FloatTensor if p[0].is_cuda else torch.FloatTensor
-    loss, lxy, lwh, lcls, lconf = FT([0]), FT([0]), FT([0]), FT([0]), FT([0])
-    txy, twh, tcls, tconf, indices = targets
+    loss, lxy, lwh, lcls, lconf, lanum = FT([0]), FT([0]), FT([0]), FT([0]), FT([0]), FT([0])
+    txy, twh, tcls, tconf, indices, tanum = targets
     MSE = nn.MSELoss()
     CE = nn.CrossEntropyLoss()
     BCE = nn.BCEWithLogitsLoss()
@@ -267,17 +267,17 @@ def compute_loss(p, targets):  # predictions, targets
             pi = pi0[b, a, gj, gi]  # predictions closest to anchors
             lxy += k * MSE(torch.sigmoid(pi[..., 0:2]), txy[i])  # xy
             lwh += k * MSE(pi[..., 2:4], twh[i])  # wh
-            lcls += (k / 4) * CE(pi[..., 5:], tcls[i])
-
+            lcls += (k / 4) * CE(pi[..., 5:(5+num_class1)], tcls[i])
+            lanum += (k / 4) * CE(pi[..., (5+num_class1):], tanum[i])
         # pos_weight = FT([gp[i] / min(gp) * 4.])
         # BCE = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         lconf += (k * 64) * BCE(pi0[..., 4], tconf[i])
-    loss = lxy + lwh + lconf + lcls
+    loss = lxy + lwh + lconf + lcls + lanum
 
     # Add to dictionary
     d = defaultdict(float)
-    losses = [loss.item(), lxy.item(), lwh.item(), lconf.item(), lcls.item()]
-    for name, x in zip(['total', 'xy', 'wh', 'conf', 'cls'], losses):
+    losses = [loss.item(), lxy.item(), lwh.item(), lconf.item(), lcls.item(), lanum.item()]
+    for name, x in zip(['total', 'xy', 'wh', 'conf', 'cls', 'anum'], losses):
         d[name] = x
 
     return loss, d
@@ -290,7 +290,7 @@ def build_targets(model, targets, pred):
     yolo_layers = get_yolo_layers(model)
 
     # anchors = closest_anchor(model, targets)  # [layer, anchor, i, j]
-    txy, twh, tcls, tconf, indices = [], [], [], [], []
+    txy, twh, tcls, tconf, indices, tanum = [], [], [], [], [], []
     for i, layer in enumerate(yolo_layers):
         nG = model.module_list[layer][0].nG  # grid size
         anchor_vec = model.module_list[layer][0].anchor_vec
@@ -310,6 +310,7 @@ def build_targets(model, targets, pred):
 
         # Indices
         b, c = t[:, 0:2].long().t()  # target image, class
+        an = t[:, 6].long()
         gxy = t[:, 2:4] * nG
         gi, gj = gxy.long().t()  # grid_i, grid_j
         indices.append((b, a, gj, gi))
@@ -323,16 +324,16 @@ def build_targets(model, targets, pred):
 
         # Class
         tcls.append(c)
-
+        tanum.append(an)
         # Conf
         tci = torch.zeros_like(pred[i][..., 0])
         tci[b, a, gj, gi] = 1  # conf
         tconf.append(tci)
 
-    return txy, twh, tcls, tconf, indices
+    return txy, twh, tcls, tconf, indices, tanum
 
 
-def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
+def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4, num_class1=0, num_class2=0):
     """
     Removes detections with lower object confidence score than 'conf_thres'
     Non-Maximum Suppression to further filter detections.
@@ -356,7 +357,8 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         #   multivariate_normal.pdf(x, mean=mat['class_mu'][c, :2], cov=mat['class_cov'][c, :2, :2])
 
         # Filter out confidence scores below threshold
-        class_prob, class_pred = torch.max(F.softmax(pred[:, 5:], 1), 1)
+        class_prob, class_pred = torch.max(F.softmax(pred[:, 5:(5+num_class1)], 1), 1)
+        anum_prob, anum_pred = torch.max(F.softmax(pred[:, (5+num_class1):], 1), 1)
         v = pred[:, 4] > conf_thres
         v = v.nonzero().squeeze()
         if len(v.shape) == 0:
@@ -365,7 +367,8 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         pred = pred[v]
         class_prob = class_prob[v]
         class_pred = class_pred[v]
-
+        anum_prob = anum_prob[v]
+        anum_pred = anum_pred[v] 
         # If none are remaining => process next image
         nP = pred.shape[0]
         if not nP:
@@ -375,14 +378,15 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         pred[:, :4] = xywh2xyxy(pred[:, :4])
 
         # Detections ordered as (x1, y1, x2, y2, obj_conf, class_prob, class_pred)
-        detections = torch.cat((pred[:, :5], class_prob.float().unsqueeze(1), class_pred.float().unsqueeze(1)), 1)
+        detections = torch.cat((pred[:, :5], class_prob.float().unsqueeze(1), class_pred.float().unsqueeze(1), anum_prob.float().unsqueeze(1), anum_pred.float().unsqueeze(1)), 1)
         # Iterate through all predicted classes
-        unique_labels = detections[:, -1].cpu().unique().to(prediction.device)
+        unique_labels1 = detections[:, 6].cpu().unique().to(prediction.device)
+        unique_labels2 = detections[:, -1].cpu().unique().to(prediction.device)
 
         nms_style = 'OR'  # 'OR' (default), 'AND', 'MERGE' (experimental)
-        for c in unique_labels:
+        for c in unique_labels1:
             # Get the detections with class c
-            dc = detections[detections[:, -1] == c]
+            dc = detections[detections[:, 6] == c]
             # Sort the detections by maximum object confidence
             _, conf_sort_index = torch.sort(dc[:, 4] * dc[:, 5], descending=True)
             dc = dc[conf_sort_index]
