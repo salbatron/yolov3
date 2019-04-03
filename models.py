@@ -125,7 +125,8 @@ class YOLOLayer(nn.Module):
                 create_grids(self, img_size, nG, p.device)
 
         # p.view(bs, 255, 13, 13) -- > (bs, 3, 13, 13, 85)  # (bs, anchors, grid, grid, classes + xywh)
-        p = p.view(bs, self.nA, self.nC + 5, nG, nG).permute(0, 1, 3, 4, 2).contiguous()  # prediction
+        # p = p.view(bs, self.nA, self.nC + 5, nG, nG).permute(0, 1, 3, 4, 2).contiguous()  # prediction
+        p = p.view(bs, self.nA, self.nC + 5 + 21, nG, nG).permute(0, 1, 3, 4, 2).contiguous()  # prediction added one more parameter #TODO: 21 replace with number of class 2
 
         if self.training:
             return p
@@ -161,7 +162,7 @@ class YOLOLayer(nn.Module):
             p[..., :4] *= self.stride
 
             # reshape from [1, 3, 13, 13, 85] to [1, 507, 85]
-            return p.view(bs, -1, 5 + self.nC)
+            return p.view(bs, -1, 5 + self.nC + 21) #TODO: 21 replace with number of class 2
 
 
 class Darknet(nn.Module):
@@ -250,7 +251,11 @@ def load_darknet_weights(self, weights, cutoff=-1):
     # Needed to write header when saving weights
     self.header_info = header
 
-    self.seen = header[3]  # number of images seen during training
+    if header.size > 0:
+        self.seen = header[3]  # number of images seen during training
+    else:
+        self.seen = 0
+        
     weights = np.fromfile(fp, dtype=np.float32)  # The rest are weights
     fp.close()
 
