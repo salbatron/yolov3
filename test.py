@@ -20,7 +20,9 @@ def test(
         conf_thres=0.3,
         nms_thres=0.45,
         save_json=False,
-        model=None
+        model=None,
+        num_class1=0,
+        num_class2=0
 ):
     device = torch_utils.select_device()
 
@@ -42,8 +44,11 @@ def test(
     model.to(device).eval()
 
     # Dataloader
-    dataset = LoadImagesAndLabels(test_path, img_size=img_size)
+    dataset = LoadCrystalImagesAndLabels(test_path, img_size=img_size)
     dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=4)
+    correct_class = 0
+    hist = [0]*9
+    anum = [1, 2, 3, 4, 6, 8, 12, 16, 20]
 
     mean_mAP, mean_R, mean_P, seen = 0.0, 0.0, 0.0, 0
     print('%11s' * 5 % ('Image', 'Total', 'P', 'R', 'mAP'))
@@ -59,7 +64,7 @@ def test(
         targets = targets.to(device)
         t = time.time()
         output = model(imgs.to(device))
-        output = non_max_suppression(output, conf_thres=conf_thres, nms_thres=nms_thres)
+        output = non_max_suppression(output, conf_thres=conf_thres, nms_thres=nms_thres, num_class1=num_class1, num_class2=num_class2)
 
         # Compute average precision for each sample
         for si, detections in enumerate(output):
@@ -101,12 +106,17 @@ def test(
                 # Extract target boxes as (x1, y1, x2, y2)
                 target_box = xywh2xyxy(labels[:, 1:5]) * img_size
                 target_cls = labels[:, 0]
+                target_anum = labels[:, 5]
 
                 detected = []
-                for *pred_box, conf, cls_conf, cls_pred in detections:
+                for *pred_box, conf, cls_conf, cls_pred, atom_conf, atom_num in detections:
                     # Best iou, index between pred and targets
                     iou, bi = bbox_iou(pred_box, target_box).max(0)
 
+                    if cls_pred == target_cls[bi] and atom_num == target_anum[bi]:
+                        correct_class = correct_class + 1
+                    if atom_num == target_anum[bi]:    
+                        hist[anum.index(int(atom_num))] += 1
                     # If iou > threshold and class is correct mark as correct
                     if iou > iou_thres and cls_pred == target_cls[bi] and bi not in detected:
                         correct.append(1)
@@ -143,7 +153,8 @@ def test(
     for i, c in enumerate(load_classes(data_cfg_dict['names'])):
         if AP_accum_count[i]:
             print('%15s: %-.4f' % (c, AP_accum[i] / (AP_accum_count[i])))
-
+    print('Correct classified: %d\n' % correct_class)
+    print(hist)
     # Save JSON
     if save_json:
         imgIds = [int(Path(x).stem.split('_')[-1]) for x in dataset.img_files]
@@ -168,27 +179,41 @@ def test(
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='cfg/coco.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/yolov3.weights', help='path to weights file')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
-    parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
-    parser.add_argument('--img-size', type=int, default=416, help='size of each image dimension')
-    opt = parser.parse_args()
-    print(opt, end='\n\n')
+    # parser = argparse.ArgumentParser(prog='test.py')
+    # parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
+    # parser.add_argument('--cfg', type=str, default='cfg/yolov3-tiny.cfg', help='cfg file path')
+    # parser.add_argument('--data-cfg', type=str, default='data/crystal.data', help='coco.data file path')
+    # parser.add_argument('--weights', type=str, default='weights/yolov3.weights', help='path to weights file')
+    # parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
+    # parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
+    # parser.add_argument('--nms-thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
+    # parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
+    # parser.add_argument('--img-size', type=int, default=300, help='size of each image dimension')
+    # opt = parser.parse_args()
+    # print(opt, end='\n\n')
+
+    cfg = 'cfg/yolov3-tiny.cfg'
+    data = 'data/crystal.data'
+    weights = 'weights/latest.pt'
+    batch_size = 1
+    img_size = 300
+    iou_thres = 0.8
+    conf_thres = 0.8
+    nms_thres = 0.45
+    save_json = False
+    num_class1 = 2
+    num_class2 = 21
 
     with torch.no_grad():
         mAP = test(
-            opt.cfg,
-            opt.data_cfg,
-            opt.weights,
-            opt.batch_size,
-            opt.img_size,
-            opt.iou_thres,
-            opt.conf_thres,
-            opt.nms_thres,
-            opt.save_json)
+            cfg=cfg,
+            data_cfg=data,
+            weights=weights,
+            batch_size=batch_size,
+            img_size=img_size,
+            iou_thres=iou_thres,
+            conf_thres=conf_thres,
+            nms_thres=nms_thres,
+            save_json=save_json,
+            num_class1=num_class1,
+            num_class2=num_class2)
