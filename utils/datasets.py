@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-
+import matplotlib.pyplot as plt
 from utils.utils import xyxy2xywh
 
 
@@ -53,6 +53,47 @@ class LoadImages:  # for inference
     def __len__(self):
         return self.nF  # number of files
 
+class LoadCrystalImages:  # for inference
+    def __init__(self, path, img_size=416):
+        if os.path.isdir(path):
+            image_format = ['.npy']
+            self.files = sorted(glob.glob('%s/*.*' % path))
+            self.files = list(filter(lambda x: os.path.splitext(x)[1].lower() in image_format, self.files))
+        elif os.path.isfile(path):
+            self.files = [path]
+
+        self.nF = len(self.files)  # number of image files
+        self.height = img_size
+
+        assert self.nF > 0, 'No images found in ' + path
+
+    def __iter__(self):
+        self.count = -1
+        return self
+
+    def __next__(self):
+        self.count += 1
+        if self.count == self.nF:
+            raise StopIteration
+        img_path = self.files[self.count]
+
+        # Read image
+        img0 = np.load(img_path.replace('\\','/'))
+        assert img0 is not None, 'File Not Found ' + img_path
+        h,w = img0.shape
+        matrix = np.zeros((300,300),dtype=np.float32)
+        matrix[:h,:w] += img0
+        img0 = matrix[:,:]
+        matrix = matrix[None, :, :]
+
+        # Show npy
+        # plt.imshow(img0)
+        # plt.show()
+
+        return img_path, matrix, 255*(img0- np.min(img0))/np.ptp(img0).astype(int)
+
+    def __len__(self):
+        return self.nF  # number of files
 
 class LoadWebcam:  # for inference
     def __init__(self, img_size=416):
@@ -193,6 +234,7 @@ class LoadCrystalImagesAndLabels(Dataset):  # for training
     def __init__(self, path, img_size=300):
         self.img_files = pd.read_csv(path)
         self.labels = list(self.img_files['label'])
+        self.atom_num = list(self.img_files['atom_num'])
         self.img_files = list(self.img_files['file'])
         assert len(self.img_files) > 0, 'No images found in %s' % path 
 
@@ -205,6 +247,7 @@ class LoadCrystalImagesAndLabels(Dataset):  # for training
         
         img_path = self.img_files[index]
         label = self.labels[index]
+        atom_num = self.atom_num[index]
 
         img = np.load(img_path.replace('\\','/'))
         assert img is not None, 'File Not Found ' + img_path
@@ -213,13 +256,14 @@ class LoadCrystalImagesAndLabels(Dataset):  # for training
         matrix[:h,:w] += img
         matrix = matrix[None, :, :]
 
-        labels = np.array([[0]*5],dtype=np.float32)
+        labels = np.array([[0]*6],dtype=np.float32)
         labels[:, 0] = label
         labels[:, 1] = w/(2*matrix.shape[1])
         labels[:, 2] = h/(2*matrix.shape[2])
         labels[:, 3] = w/matrix.shape[1]
         labels[:, 4] = h/matrix.shape[2]
-        labels_out = np.zeros((1, 6), dtype=np.float32)
+        labels[:, 5] = atom_num
+        labels_out = np.zeros((1, 7), dtype=np.float32)
         labels_out[:1, 1:] = labels
 
         plotFlag = False
